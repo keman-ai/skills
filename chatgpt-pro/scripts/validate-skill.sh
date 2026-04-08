@@ -85,7 +85,7 @@ require_pattern 'Resume mode must never print `https://chatgpt\.com/share/<conv_
 reject_pattern 'read_clipboard' "SKILL.md" "clipboard fallback must not exist in skill workflow"
 reject_pattern 'read_clipboard' "references/backend-mapping.md" "clipboard fallback must not exist in backend mapping"
 
-todo_hits="$(rg -n ':\s+__TODO_SPIKE__\b' "$ROOT" --glob '!references/selectors.md' --glob '!scripts/validate-skill.sh' || true)"
+todo_hits="$(rg -n ':\s+__TODO_SPIKE__\b' "$ROOT" --glob '!**/references/selectors.md' --glob '!**/scripts/validate-skill.sh' || true)"
 [[ -z "$todo_hits" ]] || fail "raw spike selector placeholders leaked outside references/selectors.md"$'\n'"$todo_hits"
 
 pass "skill package structure looks consistent (version $skill_version)"

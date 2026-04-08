@@ -1,7 +1,7 @@
 ---
 name: chatgpt-pro
 description: Run ONE prompt on chatgpt.com using Pro 5.4 (research-grade) with Advanced thinking and return a shareable conversation link. Burns the user's scarce Pro quota on every call. Use ONLY when the user explicitly types /chatgpt-pro or literally says "ChatGPT Pro" / "用 ChatGPT Pro". If you only need the answer text and not a public shareable link, prefer the OpenAI API instead of this skill.
-version: 0.3.6
+version: 0.3.7
 metadata:
   openclaw:
     emoji: 🧠
@@ -33,9 +33,9 @@ trigger_mode: manual_only
 
 <!--
   chatgpt-pro skill
-  Version: 0.3.6
+  Version: 0.3.7
   Single-body dual-platform skill for Claude Code and OpenClaw.
-  Last reviewed: 2026-04-07 (live browser smoke + OpenClaw share-url hardening)
+  Last reviewed: 2026-04-08 (zenas-host OpenClaw WebUI smoke + share-url clipboard hardening)
   DO NOT edit selectors inline — pin them in references/selectors.md.
 -->
 
@@ -347,10 +347,11 @@ AskUserQuestion:
    - If the captured response body already contains a full `https://chatgpt.com/share/<uuid>` URL, use it.
    - Else if the captured response body contains a share id / slug, construct `https://chatgpt.com/share/<share_id>`.
    - Else if the backend exposes recent request URLs, inspect the share-related requests. On OpenClaw live test dated 2026-04-07, the click produced `POST /backend-api/share/create` followed by `PATCH /backend-api/share/<uuid>`, and the `<uuid>` from that `PATCH` URL was the public share id even though the `PATCH` body only returned discoverability JSON.
+   - Else if `EVAL_DISABLED=false`, immediately try the browser clipboard API on the same page context: `navigator.clipboard.readText()`. Accept it only when it returns a concrete URL matching `^https://chatgpt\.com/share/[a-f0-9-]+$`. This matched a live zenas-host OpenClaw WebUI run on 2026-04-08 where the request log visible to the agent was empty but the copied share URL was correct in the browser clipboard.
    - **Never** derive a public share URL from `conv_id`. `conv_id` and `share_id` are different identifiers; `https://chatgpt.com/share/<conv_id>` is invalid and typically returns `404`.
-5. **Success condition is strict:** do not treat a clipboard toast, a changed button label, or any "已复制链接 / Copied link" affordance as proof. The step succeeds only when you can print a concrete URL string matching `^https://chatgpt\.com/share/[a-f0-9-]+$`.
+5. **Success condition is strict:** do not treat a clipboard toast, a changed button label, or any "已复制链接 / Copied link" affordance as proof. The step succeeds only when you can print a concrete URL string matching `^https://chatgpt\.com/share/[a-f0-9-]+$`, whether it came from a response body, request URL, readonly input, or clipboard API read.
 6. If the network path is unavailable but `share_url_input` appears after the click, fall back to the legacy polling path below.
-7. If neither a response, nor a parsable request URL, nor a visible URL materializes within 15 seconds → STOP with "Share link generation failed (copy-link dialog returned no URL). Conversation saved privately at chatgpt.com/c/<conv_id>." Do **not** report clipboard success.
+7. If neither a response, nor a parsable request URL, nor a clipboard URL, nor a visible URL materializes within 15 seconds → STOP with "Share link generation failed (copy-link dialog returned no URL). Conversation saved privately at chatgpt.com/c/<conv_id>." Do **not** report clipboard success unless you can print the concrete URL.
 8. **Resume-mode hard guard:** if you are in `--resume` and still do not have a concrete public URL after E5, the only valid fallback is `PRIVATE-ONLY` plus the private `chatgpt.com/c/<conv_id>` note. Never emit `share/<conv_id>`, never say "copied successfully", and never end with "continue chatting" guidance.
 9. If an already-open `https://chatgpt.com/share/<uuid>` tab exists, you may reuse it **only after** verifying that its visible content matches the target conversation. A pre-existing share page for some other conversation is not valid evidence.
 

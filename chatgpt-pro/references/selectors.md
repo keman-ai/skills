@@ -1,7 +1,7 @@
 # chatgpt-pro Selectors
 
-> **Last verified:** `2026-04-07` (OpenClaw zh-CN live smoke subset; full dual-backend spike still recommended)
-> **Skill version:** 0.3.6
+> **Last verified:** `2026-04-08` (OpenClaw zh-CN live smoke subset + zenas-host WebUI regression; full dual-backend spike still recommended)
+> **Skill version:** 0.3.7
 > **Expiry:** 7 days from `Last verified`
 > **Signed by:** `codex-live-smoke`
 
@@ -34,7 +34,7 @@ These were observed in a real browser run and are safe to use as seed locators f
 | `advanced_thinking_active_indicator` | `button "进阶专业"` | Observed in the composer toolbar after Pro selection |
 | `share_copy_link_button` | `button "复制链接"` | Current share dialog path; no URL input was visible |
 
-### OpenClaw minimal smoke set (authoritative for v0.3.6)
+### OpenClaw minimal smoke set (authoritative for v0.3.7)
 
 If all selectors in this set are pinned and probes pass, the OpenClaw backend may run the full happy path without a fresh modal spike. In this mode, it is allowed to skip the modal/config branch when `advanced_thinking_active_indicator` is already visible after `new_thread()`.
 

@@ -1,7 +1,7 @@
 # Backend Mapping — Primitives → Tool Calls
 
 > How each primitive in `SKILL.md` is implemented on each backend.
-> **Skill version:** 0.3.6
+> **Skill version:** 0.3.7
 
 ---
 
@@ -126,7 +126,7 @@ Use this only when the share dialog exposes a direct "复制链接 / Copy link" 
 | Backend | Strategy |
 |---|---|
 | `claude_code` | Not natively available. Prefer `share_url_input` polling if the UI exposes it; otherwise fall back to returning the private `chatgpt.com/c/<id>` URL instead of guessing. |
-| `openclaw` | Prefer the most specific matcher you can, ideally `browser responsebody "https://chatgpt.com/backend-api/share/create" --target-id <tabId> --timeout-ms <timeout_ms>`. If you must use a broad glob like `"**/backend-api/share/**"`, be aware that current ChatGPT may first `POST /share/create` when the dialog opens and only later `PATCH /share/<uuid>` when "复制链接 / Copy link" is pressed. In the 2026-04-07 live run, the `PATCH` body only returned discoverability JSON, so the robust fallback was `browser requests --target-id <tabId> --filter share` and extracting `<uuid>` from the `PATCH /backend-api/share/<uuid>` request URL. This primitive only succeeds once it can emit a concrete `https://chatgpt.com/share/<uuid>` string; a copy-link toast or clipboard side effect does not count. Never substitute `conv_id` for `share_id`; `share/<conv_id>` is the wrong URL shape. If no concrete public URL can be recovered, Phase F must return `PRIVATE-ONLY` rather than prose like "copied successfully". |
+| `openclaw` | Prefer the most specific matcher you can, ideally `browser responsebody "https://chatgpt.com/backend-api/share/create" --target-id <tabId> --timeout-ms <timeout_ms>`. If you must use a broad glob like `"**/backend-api/share/**"`, be aware that current ChatGPT may first `POST /share/create` when the dialog opens and only later `PATCH /share/<uuid>` when "复制链接 / Copy link" is pressed. In the 2026-04-07 live run, the `PATCH` body only returned discoverability JSON, so the robust fallback was `browser requests --target-id <tabId> --filter share` and extracting `<uuid>` from the `PATCH /backend-api/share/<uuid>` request URL. If that request log is empty but the copy click definitely happened and eval is available, immediately try `browser kind=evaluate fn="async () => await navigator.clipboard.readText()"` and accept the result only when it is a concrete `https://chatgpt.com/share/<uuid>` string. This matched a zenas-host OpenClaw WebUI run on 2026-04-08. This primitive only succeeds once it can emit a concrete `https://chatgpt.com/share/<uuid>` string; a copy-link toast alone does not count. Never substitute `conv_id` for `share_id`; `share/<conv_id>` is the wrong URL shape. If no concrete public URL can be recovered, Phase F must return `PRIVATE-ONLY` rather than prose like "copied successfully". |
 
 ### `wait_until(tabId, primitive_call, expected, timeout_ms, heartbeat_ms?)`
 
@@ -162,7 +162,7 @@ When `EVAL_DISABLED=true`, the following degradations apply:
 | Phase C3 `execCommand` fallback | available | **unavailable** — if C3 verify fails, STOP with no retry |
 | Phase D1 completion detection | MutationObserver polling `window.__cgptDone` | `exists(stop_button_selector)` every 3s |
 | Phase D speed | ~2s poll on a cached flag | ~3s + full snapshot each time (slower, more context) |
-| Phase E5 share link read | `evaluate: document.querySelector('input[readonly]').value` or visible copy-link UI fallback | Prefer exact `responsebody("https://chatgpt.com/backend-api/share/create")`; if only a broad share matcher is available and it returns discoverability JSON, inspect `requests --filter share` and extract the UUID from `PATCH /backend-api/share/<uuid>`; if unavailable, `snap` the dialog and look for a visible readonly value. If you still cannot print the concrete URL, treat the step as failed/private-only rather than "copied successfully". |
+| Phase E5 share link read | `evaluate: document.querySelector('input[readonly]').value`, `requests --filter share`, or `evaluate: navigator.clipboard.readText()` right after the copy click | Prefer exact `responsebody("https://chatgpt.com/backend-api/share/create")`; if only a broad share matcher is available and it returns discoverability JSON, inspect `requests --filter share` and extract the UUID from `PATCH /backend-api/share/<uuid>`; if the request log is empty but eval is available, immediately try `navigator.clipboard.readText()` and accept it only when it returns a full `https://chatgpt.com/share/<uuid>` string. If unavailable, `snap` the dialog and look for a visible readonly value. If you still cannot print the concrete URL, treat the step as failed/private-only rather than "copied successfully". |
 
 If a public share tab is already open, verify its visible content matches the target conversation before reusing that URL in Phase F.
 | Share link poll cost | cheap | expensive — may need to relax 250ms → 500ms interval |
@@ -177,6 +177,6 @@ If a public share tab is already open, verify its visible content matches the ta
 
 3. **Tab management in OpenClaw** distinguishes `openclaw` profile from `user` profile. This skill must use the `user` profile (the one attached to the user's real logged-in Chrome). Set `--browser-profile user` on every `browser` call in OpenClaw mode.
 
-4. **OpenClaw has a useful edge on share extraction.** The CLI/tool exposes both `responsebody` and `requests`. In the current copy-link dialog, `responsebody` is best when you can target `/backend-api/share/create` exactly; otherwise combine it with `requests --filter share` and extract the UUID from the observed `PATCH /backend-api/share/<uuid>` URL.
+4. **OpenClaw has a useful edge on share extraction.** The CLI/tool exposes both `responsebody` and `requests`, and when eval is available the page context can sometimes read `navigator.clipboard.readText()` immediately after the copy click. In the current copy-link dialog, `responsebody` is best when you can target `/backend-api/share/create` exactly; otherwise combine it with `requests --filter share` and extract the UUID from the observed `PATCH /backend-api/share/<uuid>` URL. If the request log is empty, the clipboard API can still recover the concrete share URL.
 
 5. **Cloudflare challenge** appears the same on both. Neither should attempt to solve — STOP and tell the user.

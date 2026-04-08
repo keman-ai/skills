@@ -1,6 +1,6 @@
 # Smoke Test Cases
 
-> Minimal regression tests for `chatgpt-pro` v0.3.6
+> Minimal regression tests for `chatgpt-pro` v0.3.7
 > Per skill-creator guidance: small set, manual run, no benchmark harness.
 > **Each test consumes real Pro quota unless marked `--temporary`.**
 
@@ -161,7 +161,7 @@
 8. C2 type via `act type`
 9. C3 verify via snapshot — if `send_button_enabled` is not pinned, composer text verification alone is sufficient; if that fails, STOP (no execCommand fallback)
 10. D1 polling uses `exists(stop_button)` every 3s
-11. E5 share link read prefers OpenClaw `responsebody("**/backend-api/share/**")`; if the dialog falls back to a readonly input, read that instead
+11. E5 share link read prefers OpenClaw `responsebody("**/backend-api/share/**")`, then `requests --filter share`, and if eval is available but the request log is empty, `navigator.clipboard.readText()` immediately after the copy click; if the dialog falls back to a readonly input, read that instead
 12. F → same output format as Test 1
 
 **Assertions:**

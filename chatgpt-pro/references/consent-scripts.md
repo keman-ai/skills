@@ -1,7 +1,7 @@
 # Consent Scripts
 
 > Exact wording of every `AskUserQuestion` the skill emits. Bilingual (EN + 中文).
-> **Skill version:** 0.3.6
+> **Skill version:** 0.3.7
 > **Rule:** These scripts MUST be used verbatim — do not rephrase at runtime.
 
 ---

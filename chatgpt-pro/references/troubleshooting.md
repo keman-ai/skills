@@ -1,7 +1,7 @@
 # Troubleshooting
 
 > Common failures, symptoms, and fixes.
-> **Skill version:** 0.3.6
+> **Skill version:** 0.3.7
 
 ---
 
@@ -47,7 +47,8 @@
 2. Reinstall it with `./scripts/install-openclaw-skill.sh`.
 3. Re-run from a fresh OpenClaw WebUI session if possible.
 4. The fixed build treats clipboard-only evidence as insufficient. It must print the concrete share URL, usually from `responsebody("https://chatgpt.com/backend-api/share/create")` or, on current ChatGPT, from the observed `PATCH /backend-api/share/<uuid>` request URL.
-5. If the run still ends without a printed URL, treat it as a share-extraction failure and fall back to the private `chatgpt.com/c/<conv_id>` link instead of claiming public-share success.
+5. On some OpenClaw WebUI runs, the request log can still be empty even though the copy succeeded. If eval is available, immediately try `navigator.clipboard.readText()` on the ChatGPT page and accept it only when it returns the full `https://chatgpt.com/share/<uuid>` string. This matched a live zenas-host run on 2026-04-08.
+6. If the run still ends without a printed URL, treat it as a share-extraction failure and fall back to the private `chatgpt.com/c/<conv_id>` link instead of claiming public-share success.
 
 ---
 
@@ -167,10 +168,11 @@
 2. Manually try to share the same conversation through the UI.
 3. If the dialog only shows `复制链接`, prefer the OpenClaw network path instead of waiting for an input that may never appear.
 4. If `responsebody("**/backend-api/share/**")` returns only discoverability JSON and no URL, inspect `openclaw browser requests --filter share` and extract the UUID from the observed `PATCH /backend-api/share/<uuid>` request. This matched the live ChatGPT flow on 2026-04-07.
-5. If you can target the create request exactly, prefer `responsebody("https://chatgpt.com/backend-api/share/create")` over a broad glob.
-6. If manual share works, re-run with a longer timeout (edit `SKILL.md` Phase E5/E6, default 15s → try 30s).
-7. If manual share still fails → ChatGPT may have disabled sharing for your account / region / conversation type.
-8. Fall back: use the private `chatgpt.com/c/<conv_id>` link shown in Phase F output.
+5. If the request log is empty but eval is available, immediately try `navigator.clipboard.readText()` on the ChatGPT page. On zenas-host (2026-04-08), that clipboard read returned the correct public share URL even though the agent-visible request log was empty.
+6. If you can target the create request exactly, prefer `responsebody("https://chatgpt.com/backend-api/share/create")` over a broad glob.
+7. If manual share works, re-run with a longer timeout (edit `SKILL.md` Phase E5/E6, default 15s → try 30s).
+8. If manual share still fails → ChatGPT may have disabled sharing for your account / region / conversation type.
+9. Fall back: use the private `chatgpt.com/c/<conv_id>` link shown in Phase F output.
 
 ---
 
