@@ -1,7 +1,7 @@
 # chatgpt-pro Selectors
 
-> **Last verified:** `2026-04-08` (OpenClaw zh-CN live smoke subset + zenas-host WebUI regression; full dual-backend spike still recommended)
-> **Skill version:** 0.3.7
+> **Last verified:** `2026-04-08` (OpenClaw zh-CN live smoke subset + zenas-host WebUI regression + temporary-chat escape anchors; full dual-backend spike still recommended)
+> **Skill version:** 0.3.32
 > **Expiry:** 7 days from `Last verified`
 > **Signed by:** `codex-live-smoke`
 
@@ -27,14 +27,21 @@ These were observed in a real browser run and are safe to use as seed locators f
 | `new_chat_button` | `link "新聊天"` | Sidebar new-thread action |
 | `model_selector_button` | `button "模型选择器"` | Top banner model switcher |
 | `composer` | `textbox "与 ChatGPT 聊天"` | Main prompt box |
-| `share_button` | `button "分享"` | Present after the conversation has content |
+| `share_button` | `button "分享"` | Present after the conversation has content; on 2026-04-08 zh-CN UI two visible `分享` buttons can coexist, and the valid one is the header-level conversation share near `模型选择器` / `打开对话选项`, not the reply-action-row share |
 | `stop_button` | `button "停止流式传输"` | Reliable streaming-state marker |
 | `pro_option_row` | `menuitem "Pro 研究级智能模型"` | Dropdown row showed selected state |
 | `model_config_menuitem` | `menuitem "配置…"` | Still present in current menu |
 | `advanced_thinking_active_indicator` | `button "进阶专业"` | Observed in the composer toolbar after Pro selection |
 | `share_copy_link_button` | `button "复制链接"` | Current share dialog path; no URL input was visible |
+| `temporary_chat_indicator` | `heading "临时聊天"` | Fresh default runs that need a public share link must escape this state before typing/submitting |
+| `temporary_chat_exit_button` | `button "关闭临时聊天"` | Preferred escape action when ChatGPT opens a fresh run into temporary-chat mode |
 
-### OpenClaw minimal smoke set (authoritative for v0.3.7)
+**Writable-ref rule (OpenClaw):**
+- Use interactive `e...` refs from `snapshot --format ai --labels` (or equivalent writable role snapshots) for clicks and typing.
+- Treat `ax...` refs from `snapshot --format aria` as read-only diagnostics only.
+- If a writable snapshot collapses to shell-only content such as `跳至内容` / `Skip to content`, or only a tiny ref set on a page that is already known to contain the composer or share dialog, treat it as degenerate. Re-snapshot before clicking, and prefer the pinned `share_copy_link_button` role/name over tiny refs like `e1/e2/e3`.
+
+### OpenClaw minimal smoke set (authoritative for v0.3.32)
 
 If all selectors in this set are pinned and probes pass, the OpenClaw backend may run the full happy path without a fresh modal spike. In this mode, it is allowed to skip the modal/config branch when `advanced_thinking_active_indicator` is already visible after `new_thread()`.
 
@@ -64,6 +71,7 @@ These are **optional** for OpenClaw seed-mode and must not block the happy path 
 - `delete_link_button`
 - `shared_page_model_badge`
 - `temporary_chat_indicator`
+- `temporary_chat_exit_button`
 
 ---
 
@@ -284,6 +292,7 @@ share_button:
     primary:
       role: button
       name: 分享
+    note: Prefer the header-level share button near `模型选择器` / `打开对话选项`. Never click a `分享` button inside `回复操作` / copy-reply / thumbs rows.
 
 # === Phase B — Model config ===
 current_model_label:
@@ -344,7 +353,18 @@ delete_link_button: __TODO_SPIKE__  # optional until unshare flow is exercised
 shared_page_model_badge: __TODO_SPIKE__  # optional until share-page verification is exercised
 
 # === Temporary chat detection ===
-temporary_chat_indicator: __TODO_SPIKE__  # optional until temporary mode is exercised
+temporary_chat_indicator:
+  claude_code: __TODO_SPIKE__
+  openclaw:
+    primary:
+      role: heading
+      name: 临时聊天
+temporary_chat_exit_button:
+  claude_code: __TODO_SPIKE__
+  openclaw:
+    primary:
+      role: button
+      name: 关闭临时聊天
 ```
 
 ---
@@ -371,6 +391,7 @@ If either backend reports FRAGILE, the skill must print a warning at runtime: "C
 
 | Date | Change | Signed by |
 |---|---|---|
+| 2026-04-08 | Added temporary-chat escape anchors (`临时聊天`, `关闭临时聊天`) from zenas-host OpenClaw live smoke | codex-zenas-live |
 | 2026-04-07 | Added OpenClaw live-tested seed selectors and current copy-link share-dialog notes | codex-live-smoke |
 | 2026-04-07 | Declared the OpenClaw minimal smoke set and marked modal-only selectors as optional for seed-mode happy path | codex-openclaw-webui |
 | 2026-04-07 | Initial placeholder, awaiting first full spike | team-lead |
