@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import itertools
 import json
 import os
@@ -9,6 +10,7 @@ import re
 import subprocess
 import sys
 import time
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -19,6 +21,11 @@ try:
 except ImportError as exc:  # pragma: no cover - environment bootstrap
     print(f"missing dependency: {exc}", file=sys.stderr)
     raise SystemExit(2)
+
+with contextlib.suppress(Exception):
+    import urllib3
+
+    warnings.filterwarnings("ignore", category=urllib3.exceptions.NotOpenSSLWarning)
 
 
 CDP_PORT = 9223
@@ -53,6 +60,13 @@ def asuser_prefix() -> list[str]:
 
 def ensure_clone_running() -> None:
     prefix = asuser_prefix()
+    clone_marker = f"--user-data-dir={CLONE_DIR}"
+    run(
+        [*prefix, "pkill", "-f", clone_marker],
+        check=False,
+        timeout=20,
+    )
+    time.sleep(1)
     for name in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
         path = CLONE_DIR / name
         try:
@@ -323,7 +337,15 @@ def has_button(state: dict[str, Any], pattern: str) -> bool:
 def is_logged_in_chatgpt_state(state: dict[str, Any]) -> bool:
     inputs = state.get("inputs", [])
     has_composer = any(
-        (item.get("name") == "prompt-textarea") or ("与 ChatGPT 聊天" in (item.get("aria") or ""))
+        item.get("visible")
+        and (
+            (item.get("name") == "prompt-textarea")
+            or ("与 ChatGPT 聊天" in (item.get("aria") or ""))
+            or (
+                item.get("role") == "textbox"
+                and item.get("contenteditable") == "true"
+            )
+        )
         for item in inputs
         if isinstance(item, dict)
     )
@@ -393,6 +415,20 @@ def press_key(session: Session, key: str) -> None:
     session.browser.send("Input.dispatchKeyEvent", {"type": "keyUp", **params}, session_id=session.session_id)
 
 
+def press_enter(session: Session) -> None:
+    params = {
+        "key": "Enter",
+        "code": "Enter",
+        "windowsVirtualKeyCode": 13,
+        "nativeVirtualKeyCode": 13,
+        "text": "\r",
+        "unmodifiedText": "\r",
+    }
+    session.browser.send("Input.dispatchKeyEvent", {"type": "keyDown", **params}, session_id=session.session_id)
+    session.browser.send("Input.dispatchKeyEvent", {"type": "char", **params}, session_id=session.session_id)
+    session.browser.send("Input.dispatchKeyEvent", {"type": "keyUp", **params}, session_id=session.session_id)
+
+
 def complete_google_login(session: Session, email: str, password: str) -> None:
     print({"flow": "google-sso"}, flush=True)
     if wait_for_visible_input(session, "input[type=email], input[name=identifier]", timeout=15):
@@ -443,11 +479,18 @@ def state_expr() -> str:
   href: location.href,
   title: document.title,
   body: (document.body?.innerText || '').slice(0, 2500),
-  inputs: [...document.querySelectorAll('input,textarea')].map(el => ({
+  inputs: [...document.querySelectorAll('input,textarea,[role=textbox],[contenteditable=true]')].map(el => ({
     type: el.type || '',
     name: el.name || '',
     placeholder: el.placeholder || '',
-    aria: el.getAttribute('aria-label') || ''
+    aria: el.getAttribute('aria-label') || '',
+    role: el.getAttribute('role') || '',
+    contenteditable: el.getAttribute('contenteditable') || '',
+    visible: (() => {
+      const rect = el.getBoundingClientRect();
+      const style = window.getComputedStyle(el);
+      return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+    })()
   })),
   buttons: [...document.querySelectorAll('button,a,[role=button]')].map(el => ({
     text: (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim(),
@@ -456,11 +499,51 @@ def state_expr() -> str:
 }))()"""
 
 
+def visible_composer_expr() -> str:
+    return r"""(() => {
+  const visible = (el) => {
+    if (!el) return false;
+    const rect = el.getBoundingClientRect();
+    const style = window.getComputedStyle(el);
+    return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+  };
+  const candidates = [
+    ...document.querySelectorAll('[role="textbox"][contenteditable="true"], [contenteditable="true"][aria-label*="ChatGPT"], textarea[aria-label*="ChatGPT"], textarea[name="prompt-textarea"], textarea')
+  ].filter(visible);
+  const target = candidates.find((el) => el.getAttribute('contenteditable') === 'true')
+    || candidates.find((el) => el.tagName === 'TEXTAREA')
+    || null;
+  if (!target) return null;
+  return {
+    tag: target.tagName,
+    role: target.getAttribute('role') || '',
+    aria: target.getAttribute('aria-label') || '',
+    contenteditable: target.getAttribute('contenteditable') || '',
+    value: ('value' in target ? target.value : (target.innerText || target.textContent || '')).slice(0, 200)
+  };
+})()"""
+
+
 def js_set_input(selector_expr: str, value: str) -> str:
     return f"""(() => {{
   const value = {json.dumps(value, ensure_ascii=False)};
   const input = {selector_expr};
   if (!input) return JSON.stringify({{ok:false}});
+  input.focus();
+  if (input.getAttribute('contenteditable') === 'true') {{
+    input.innerHTML = '';
+    input.textContent = value;
+    input.dispatchEvent(new InputEvent('beforeinput', {{bubbles:true, inputType:'insertText', data:value}}));
+    input.dispatchEvent(new InputEvent('input', {{bubbles:true, inputType:'insertText', data:value}}));
+    input.dispatchEvent(new Event('change', {{bubbles:true}}));
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(input);
+    range.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return JSON.stringify({{ok:true, kind:'contenteditable', valueLen: (input.innerText || input.textContent || '').length}});
+  }}
   const setter =
     input.tagName === 'TEXTAREA'
       ? Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set
@@ -470,13 +553,10 @@ def js_set_input(selector_expr: str, value: str) -> str:
   }} else {{
     input.value = value;
   }}
-  input.focus();
-  input.dispatchEvent(new Event('input', {{bubbles:true}}));
+  input.dispatchEvent(new InputEvent('beforeinput', {{bubbles:true, inputType:'insertText', data:value}}));
+  input.dispatchEvent(new InputEvent('input', {{bubbles:true, inputType:'insertText', data:value}}));
   input.dispatchEvent(new Event('change', {{bubbles:true}}));
-  input.dispatchEvent(new Event('blur', {{bubbles:true}}));
-  input.dispatchEvent(new KeyboardEvent('keydown', {{bubbles:true, key:'Enter'}}));
-  input.dispatchEvent(new KeyboardEvent('keyup', {{bubbles:true, key:'Enter'}}));
-  return JSON.stringify({{ok:true, valueLen: (input.value || input.innerText || '').length}});
+  return JSON.stringify({{ok:true, kind:'input', valueLen: (input.value || input.innerText || '').length}});
 }})()"""
 
 
@@ -569,9 +649,10 @@ def submit_prompt_fn() -> str:
     const style = window.getComputedStyle(el);
     return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
   };
-  const ta = document.querySelector('textarea');
-  const form = ta?.closest('form') || ta?.parentElement?.closest('form') || ta?.parentElement;
-  if (!form) return {ok:false, reason:'composer-form-missing'};
+  const composer = [...document.querySelectorAll('[role="textbox"][contenteditable="true"], [contenteditable="true"][aria-label*="ChatGPT"], textarea[aria-label*="ChatGPT"], textarea[name="prompt-textarea"], textarea')].find(visible);
+  if (!composer) return {ok:false, reason:'composer-missing'};
+  composer.focus();
+  const form = composer.closest('form') || composer.parentElement?.closest('form') || composer.parentElement;
   const buttons = [...form.querySelectorAll('button')];
   const score = (el) => {
     const label = `${el.getAttribute('aria-label') || ''} ${text(el)}`;
@@ -580,12 +661,13 @@ def submit_prompt_fn() -> str:
     if (/发送|send|submit/i.test(label)) value += 100;
     if ((el.className || '').includes('composer-submit-button-color')) value += 40;
     if ((el.type || '').toLowerCase() === 'submit') value += 20;
+    if (/启动语音功能|开始听写|voice|dictation/i.test(label)) value -= 500;
     if (el.disabled || el.getAttribute('aria-disabled') === 'true') value -= 1000;
     return value;
   };
   buttons.sort((a, b) => score(b) - score(a));
   const chosen = buttons[0];
-  if (!chosen || score(chosen) < 100) return {ok:false, reason:'composer-submit-missing'};
+  if (!chosen || score(chosen) < 100) return {ok:false, reason:'composer-submit-missing', composerTag: composer.tagName, composerRole: composer.getAttribute('role') || ''};
   chosen.click();
   return {
     ok:true,
@@ -791,6 +873,7 @@ def fresh(prompt: str) -> None:
     ensure_clone_running()
     browser = CdpBrowser()
     try:
+        prompt = prompt.rstrip("\r\n")
         pre_pages = browser.list_pages()
         pre_ids = {page.get("id") for page in pre_pages}
         session = browser.new_page()
@@ -806,13 +889,36 @@ def fresh(prompt: str) -> None:
             raise RuntimeError("chatgpt.com is not in a logged-in writable state")
 
         print(state, flush=True)
-        set_result = eval_json(session, js_set_input("document.querySelector('textarea[aria-label=\"与 ChatGPT 聊天\"], textarea[name=\"prompt-textarea\"], textarea')", prompt))
+        composer = eval_json(session, visible_composer_expr())
+        print({"composer": composer}, flush=True)
+        if not composer:
+            raise RuntimeError("visible composer did not appear on chatgpt.com root page")
+        set_result = eval_json(
+            session,
+            js_set_input(
+                """(() => [...document.querySelectorAll('[role="textbox"][contenteditable="true"], [contenteditable="true"][aria-label*="ChatGPT"], textarea[aria-label*="ChatGPT"], textarea[name="prompt-textarea"], textarea')].find((el) => {
+  const rect = el.getBoundingClientRect();
+  const style = window.getComputedStyle(el);
+  return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+}))()""",
+                prompt,
+            ),
+        )
         print(set_result, flush=True)
+        time.sleep(1)
+        press_enter(session)
         time.sleep(1)
         send_result = eval_json(session, submit_prompt_fn())
         print(send_result, flush=True)
         if not isinstance(send_result, dict) or not send_result.get("ok"):
-            raise RuntimeError(f"submit control not ready: {send_result}")
+            state = parse_state_payload(eval_json(session, state_expr()))
+            if is_root_chatgpt_url(state.get("href", "")):
+                press_enter(session)
+                time.sleep(2)
+                followup_state = parse_state_payload(eval_json(session, state_expr()))
+                print({"followup_state": followup_state}, flush=True)
+            else:
+                raise RuntimeError(f"submit control not ready: {send_result}")
 
         conv_id = ""
         rebound = False
