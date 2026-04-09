@@ -1,7 +1,7 @@
 # Backend Mapping — Primitives → Tool Calls
 
 > How each primitive in `SKILL.md` is implemented on each backend.
-> **Skill version:** 0.3.32
+> **Skill version:** 0.3.43
 
 ---
 
@@ -14,13 +14,18 @@ if tool "mcp__Claude_in_Chrome__tabs_context_mcp" in tools:
 elif tool "browser" in tools:
     BACKEND = "openclaw"
     # one-shot evaluate probe (cache the result for the rest of the run)
-    result = browser(kind="evaluate", fn="1+1")
-    EVAL_DISABLED = (result is error or contains "disabled")
-elif tool "exec" in tools and "openclaw browser" is available in PATH:
-    BACKEND = "openclaw_cli_exec"
-    # one-shot evaluate probe through the installed CLI
-    result = exec('openclaw browser evaluate "1+1" 2>/dev/null')
-    EVAL_DISABLED = (result is error or exitCode != 0)
+    result = browser(kind="evaluate", fn='() => "__CHATGPT_PRO_EVAL_OK__"')
+    EVAL_DISABLED = (result is error or contains "disabled" or result != "__CHATGPT_PRO_EVAL_OK__")
+elif tool "exec" in tools or tool "process" in tools:
+    # mandatory concrete probe; do not conclude "no backend" from tool names alone
+    status = exec('openclaw browser status 2>/dev/null')
+    if status succeeded:
+        BACKEND = "openclaw_cli_exec"
+        # one-shot evaluate probe through the installed CLI
+        result = exec('openclaw browser evaluate --fn '\''() => "__CHATGPT_PRO_EVAL_OK__"'\'' 2>/dev/null')
+        EVAL_DISABLED = (result is error or exitCode != 0 or stdout does not contain "__CHATGPT_PRO_EVAL_OK__")
+    else:
+        raise "No compatible browser backend"
 else:
     raise "No compatible browser backend"
 
@@ -33,8 +38,14 @@ if both available:
 Some OpenClaw WebUI sessions expose `exec` / `process` instead of the raw `browser` tool, while still having the OpenClaw CLI installed locally. In that case:
 
 - Treat `openclaw browser ...` CLI calls as the concrete OpenClaw backend.
+- Follow the concrete subcommand grammar from OpenClaw `2026.3.24`: `openclaw browser open <url>` takes no timeout flag, while `responsebody` uses `--timeout-ms <n>`. Do not append `--timeout <n>` after a subcommand.
+- If the wrapped invocation reads `SKILL.md` and the next substantive action is still a plain-text answer instead of an `openclaw browser ...` CLI step, that run is invalid even when the raw `browser` tool is absent.
+- If `exec` / `process` exists, first probe `openclaw browser status`. An exec-only host must not be classified as "Neither is available" without that concrete probe.
 - Use the subcommands that actually exist on OpenClaw `2026.3.24`: `status`, `tabs`, `open`, `navigate`, `snapshot`, `click`, `fill`, `press`, `requests`, `responsebody`, `screenshot`.
 - Do **not** invent `openclaw browser act ...` or `openclaw browser type ...` in exec-only mode.
+- Do **not** execute the user prompt through `openclaw browser evaluate`. `evaluate` is reserved for inert backend probes or DOM inspection only. The prompt itself may only flow into Phase C composer fill/type operations on `chatgpt.com`.
+- The sequence `openclaw browser status` + inert `openclaw browser evaluate --fn '() => "__CHATGPT_PRO_EVAL_OK__"'` + `openclaw browser tabs` is still setup-only. It does **not** authorize final output, and it does **not** justify reusing a private `https://chatgpt.com/c/<conv_id>` URL from the tab inventory as the reported share link.
+- Even after `openclaw browser open https://chatgpt.com/`, the run is still in setup until it re-enumerates tabs, binds the dedicated `run_tab_id`, and takes a writable snapshot from that bound tab. Reading `references/selectors.md` before that point is allowed only as setup help; it is not evidence of successful execution.
 - Once a logged-in `chatgpt.com` state has been verified in the default OpenClaw profile, stop retrying `--browser-profile user` on hosts where the attached user profile is unavailable.
 
 ---
@@ -157,7 +168,7 @@ Use this only when the share dialog exposes a direct "复制链接 / Copy link" 
 | Backend | Strategy |
 |---|---|
 | `claude_code` | Not natively available. Prefer `share_url_input` polling if the UI exposes it; otherwise fall back to returning the private `chatgpt.com/c/<id>` URL instead of guessing. |
-| `openclaw` / `openclaw_cli_exec` | Prefer the most specific matcher you can, ideally `browser responsebody "https://chatgpt.com/backend-api/share/create" --target-id <tabId> --timeout-ms <timeout_ms>` or `exec("openclaw browser responsebody https://chatgpt.com/backend-api/share/create --target-id <tabId> --timeout <timeout_ms>")`. If you must use a broad glob like `"**/backend-api/share/**"`, be aware that current ChatGPT may first `POST /share/create` when the dialog opens and only later `PATCH /share/<uuid>` when "复制链接 / Copy link" is pressed. In the 2026-04-07 live run, the `PATCH` body only returned discoverability JSON, so the robust fallback was `browser requests --target-id <tabId> --filter share` or `exec("openclaw browser requests --target-id <tabId>")` and extracting `<uuid>` from the `PATCH /backend-api/share/<uuid>` request URL. If that request log is empty but the copy click definitely happened and eval is available, immediately try `browser kind=evaluate fn="async () => await navigator.clipboard.readText()"` and accept the result only when it is a concrete `https://chatgpt.com/share/<uuid>` string. This matched a zenas-host OpenClaw WebUI run on 2026-04-08. This primitive only succeeds once it can emit a concrete `https://chatgpt.com/share/<uuid>` string; a copy-link toast alone does not count. Never substitute `conv_id` for `share_id`; `share/<conv_id>` is the wrong URL shape. If no concrete public URL can be recovered, Phase F must return `PRIVATE-ONLY` rather than prose like "copied successfully". |
+| `openclaw` / `openclaw_cli_exec` | Prefer the most specific matcher you can, ideally `browser responsebody "https://chatgpt.com/backend-api/share/create" --target-id <tabId> --timeout-ms <timeout_ms>` or `exec("openclaw browser responsebody https://chatgpt.com/backend-api/share/create --target-id <tabId> --timeout-ms <timeout_ms>")`. If you must use a broad glob like `"**/backend-api/share/**"`, be aware that current ChatGPT may first `POST /share/create` when the dialog opens and only later `PATCH /share/<uuid>` when "复制链接 / Copy link" is pressed. In the 2026-04-07 live run, the `PATCH` body only returned discoverability JSON, so the robust fallback was `browser requests --target-id <tabId> --filter share` or `exec("openclaw browser requests --target-id <tabId>")` and extracting `<uuid>` from the `PATCH /backend-api/share/<uuid>` request URL. If that request log is empty but the copy click definitely happened and eval is available, immediately try `browser kind=evaluate fn="async () => await navigator.clipboard.readText()"` and accept the result only when it is a concrete `https://chatgpt.com/share/<uuid>` string. This matched a zenas-host OpenClaw WebUI run on 2026-04-08. This primitive only succeeds once it can emit a concrete `https://chatgpt.com/share/<uuid>` string; a copy-link toast alone does not count. Never substitute `conv_id` for `share_id`; `share/<conv_id>` is the wrong URL shape. If no concrete public URL can be recovered, Phase F must return `PRIVATE-ONLY` rather than prose like "copied successfully". |
 
 ### `wait_until(tabId, primitive_call, expected, timeout_ms, heartbeat_ms?)`
 

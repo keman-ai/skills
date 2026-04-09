@@ -1,6 +1,6 @@
 # Smoke Test Cases
 
-> Minimal regression tests for `chatgpt-pro` v0.3.32
+> Minimal regression tests for `chatgpt-pro` v0.3.43
 > Per skill-creator guidance: small set, manual run, no benchmark harness.
 > **Each test consumes real Pro quota unless marked `--temporary`.**
 
@@ -17,6 +17,15 @@
 7. Ensure `references/selectors.md` is freshly spiked (`Last verified` within 7 days), or that the OpenClaw seed selectors still match the live UI you're testing
 8. Run each test from the test description below
 9. Record `PASS / FAIL / SKIP` in the table at the bottom
+
+## OpenClaw exec-only syntax guard
+
+On OpenClaw `2026.3.24`, the live CLI grammar matters:
+
+- `openclaw browser open https://chatgpt.com/` must be emitted with no timeout flag.
+- `openclaw browser responsebody ...` must use `--timeout-ms <n>`.
+- A valid exec-only wait example is `openclaw browser responsebody https://chatgpt.com/backend-api/share/create --target-id <tabId> --timeout-ms <n>`.
+- Any transcript or session log that shows `unknown option '--timeout'` during the browser path is a FAIL.
 
 ---
 
@@ -149,6 +158,9 @@
 - After the initial OpenClaw setup probes, a real `chatgpt.com` tab appears in the browser
 - A transcript that stops at `browser status` / `browser tabs` with no `chatgpt.com` tab is a FAIL
 - The run continues into Phase A/B instead of waiting on the control page forever
+- On exec-only hosts with the bundled driver present, a transcript that treats `openclaw browser status -> running: false` as final evidence and never invokes `openclaw-chatgpt-pro-driver.py` is a FAIL
+- On exec-only hosts with the bundled driver present, a transcript that does invoke the driver but then ends with placeholder prose like `Still running the ChatGPT Pro browser flow...` before the driver exits and prints Phase F is a FAIL
+- On OpenClaw exact `/chatgpt-pro ...` runs, a transcript that starts by reading `SOUL.md`, `USER.md`, `HEARTBEAT.md`, `MEMORY.md`, or dated `memory/*.md` before the skill driver/browser workflow is a FAIL
 
 ## Test 3c — Slash-wrapper must not answer locally
 
@@ -165,10 +177,16 @@
 1. OpenClaw may rewrite the request into `Use the "chatgpt-pro" skill for this request ... User input:`
 2. The run reads the installed `SKILL.md`
 3. After that, it must enter the browser workflow; it must not directly answer `ZENAS-RELIABILITY-WRAPPER`
+4. On exec-only OpenClaw hosts, the first substantive post-read action may be `openclaw browser status` / `tabs` / `open https://chatgpt.com/` through `exec`, but it still must be a browser step
 
 **Assertions:**
 - A plain-text assistant answer equal to the wrapped prompt result, with no browser tool calls and no Phase F fields, is a FAIL
 - The first substantive post-read action must be a browser step or a valid A2/D2 gate, not a local completion of `User input:`
+- On exec-only OpenClaw hosts, a transcript that reads `SKILL.md` and then answers locally without any `openclaw browser ...` CLI step is also a FAIL
+- On exec-only OpenClaw hosts, a transcript that says "Neither is available" without first attempting `openclaw browser status` through `exec` / `process` is also a FAIL
+- On exec-only OpenClaw hosts, a transcript that uses `openclaw browser evaluate` on prompt-shaped content such as `1+1`, then surfaces that local probe result as the final answer, is a FAIL
+- On exec-only OpenClaw hosts, a transcript that stops after setup-only probes such as `openclaw browser status`, inert `openclaw browser evaluate`, and `openclaw browser tabs`, then prints `2` or `Share link: https://chatgpt.com/c/<conv_id>`, is a FAIL
+- On exec-only OpenClaw hosts, a transcript that reaches `openclaw browser open https://chatgpt.com/` and optionally reads `references/selectors.md`, but still stops before rebinding `run_tab_id` and taking a writable snapshot, then prints the raw prompt result, is a FAIL
 
 ---
 

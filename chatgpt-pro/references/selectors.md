@@ -1,7 +1,7 @@
 # chatgpt-pro Selectors
 
 > **Last verified:** `2026-04-08` (OpenClaw zh-CN live smoke subset + zenas-host WebUI regression + temporary-chat escape anchors; full dual-backend spike still recommended)
-> **Skill version:** 0.3.32
+> **Skill version:** 0.3.43
 > **Expiry:** 7 days from `Last verified`
 > **Signed by:** `codex-live-smoke`
 

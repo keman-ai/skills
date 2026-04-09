@@ -1,7 +1,7 @@
 # Troubleshooting
 
 > Common failures, symptoms, and fixes.
-> **Skill version:** 0.3.32
+> **Skill version:** 0.3.43
 
 ---
 
@@ -34,6 +34,17 @@
 3. Start from a fresh OpenClaw WebUI session.
 4. The fixed build detects this environment and falls back to the exact plain-text consent scripts from `references/consent-scripts.md`.
 5. Reply with exactly one option label when the gate appears.
+
+## "The run failed with `unknown option '--timeout'` after `openclaw browser open` or `responsebody`"
+
+**Cause:** The exec-only path used a global-style `--timeout` flag after a concrete `openclaw browser` subcommand. On OpenClaw `2026.3.24`, `openclaw browser open <url>` does not take a timeout flag at all, and `responsebody` expects `--timeout-ms <n>` instead.
+
+**Fix:**
+1. Upgrade to `chatgpt-pro` v0.3.36 or later.
+2. Reinstall it with `./scripts/install-openclaw-skill.sh`.
+3. For exec-only runs, use `openclaw browser open https://chatgpt.com/` with no timeout flag.
+4. For network waits, use `openclaw browser responsebody ... --timeout-ms <n>`.
+5. If a run log still shows `unknown option '--timeout'`, treat that run as failed setup and restart from a fresh session; do not trust any partial browser state it left behind.
 
 ## "The agent keeps talking about `__TODO_SPIKE__` instead of running"
 
@@ -87,16 +98,57 @@
 
 ---
 
-## "The slash-wrapper read `SKILL.md` and then answered the prompt locally"
+## "The skill said neither backend was available even though `exec` / `process` existed"
 
-**Cause:** OpenClaw did rewrite the message into `Use the "chatgpt-pro" skill for this request ... User input:`, but the model still treated the wrapped prompt as something to answer directly instead of as browser-execution input. In a live zenas-host run on 2026-04-08, the session read `SKILL.md` and then replied only `ZENAS-RELIABILITY-AD-N`, with no browser tool calls at all.
+**Cause:** The host was an exec-only OpenClaw environment with no raw `browser` tool, but the model still decided "Neither is available" without first probing `openclaw browser status`. A live huanghaibin-host run on 2026-04-08 reproduced this exactly: the tool list exposed `exec` and `process`, the wrapped invocation read `SKILL.md`, and the final answer still said the browser backend was unavailable.
 
 **Fix:**
-1. Upgrade to `chatgpt-pro` v0.3.28 or later.
+1. Upgrade to `chatgpt-pro` v0.3.34 or later.
+2. Reinstall it with `./scripts/install-openclaw-skill.sh`.
+3. On exec-only OpenClaw hosts, the fixed build must actively probe `openclaw browser status` through `exec` / `process` before concluding that no backend exists.
+4. If that probe succeeds, the run must continue as `openclaw_cli_exec` instead of stopping.
+5. A transcript that says "Neither is available" without ever attempting `openclaw browser status` is an invalid run.
+
+---
+
+## "The slash-wrapper read `SKILL.md` and then answered the prompt locally"
+
+**Cause:** OpenClaw did rewrite the message into `Use the "chatgpt-pro" skill for this request ... User input:`, but the model still treated the wrapped prompt as something to answer directly instead of as browser-execution input. In live 2026-04-08 runs on zenas-host and huanghaibin-host, the session read `SKILL.md` and then replied only the wrapped prompt result (`ZENAS-RELIABILITY-AD-N`, `STABILITY-A-20260408`, `STABILITY-B-20260408`), with no browser steps at all.
+
+**Fix:**
+1. Upgrade to `chatgpt-pro` v0.3.34 or later.
 2. Reinstall it with `./scripts/install-openclaw-skill.sh`.
 3. Start a fresh OpenClaw WebUI session so the new wrapper guard is loaded.
 4. In the fixed build, a wrapped invocation must never answer `User input:` locally; after reading `SKILL.md`, it must proceed into the browser workflow or a valid A2/D2 gate.
-5. Treat any transcript that returns only the raw wrapped answer with no browser steps and no Phase F fields as an invalid run.
+5. On exec-only OpenClaw hosts, the first substantive post-read action may be the CLI fast path (`openclaw browser status` / `tabs` / `open https://chatgpt.com/`) rather than the raw `browser` tool, but it still must be a browser step, not a local completion.
+6. Treat any transcript that returns only the raw wrapped answer with no browser steps and no Phase F fields as an invalid run.
+
+---
+
+## "The run only did setup probes, then printed `2` and `Share link: https://chatgpt.com/c/<conv_id>`"
+
+**Cause:** The run did enter the exec-only OpenClaw backend, but it treated setup-only evidence as if the workflow were complete. A live huanghaibin-host run on 2026-04-08 reproduced this exactly: the session read `SKILL.md`, ran `openclaw browser status`, ran the inert sentinel `openclaw browser evaluate --fn '() => "__CHATGPT_PRO_EVAL_OK__"'`, enumerated `openclaw browser tabs`, and then ended with the local answer `2` plus a private `chatgpt.com/c/<conv_id>` URL mislabeled as `Share link`.
+
+**Fix:**
+1. Upgrade to `chatgpt-pro` v0.3.37 or later.
+2. Reinstall it with `./scripts/install-openclaw-skill.sh`.
+3. Start a fresh OpenClaw WebUI session so the updated fast-path instructions are reloaded.
+4. In the fixed build, `status` + inert `evaluate` + `tabs` is setup-only. The run must still create and bind a dedicated writable `https://chatgpt.com/` tab before it may type, submit, or report anything.
+5. Treat any final line shaped like `Share link: https://chatgpt.com/c/<conv_id>` as a hard regression. That is a private conversation URL, not a public share link.
+6. If the transcript shows only setup probes plus a local answer, discard the run and restart from a fresh session; do not trust the reported `c/<conv_id>` URL as share evidence.
+
+---
+
+## "The run reached `open https://chatgpt.com/` and read `selectors.md`, but still answered locally"
+
+**Cause:** The run progressed one step further than the older setup-only regression, but it still never crossed into a real writable ChatGPT workflow. A live huanghaibin-host run on 2026-04-08 reproduced this exactly: after `openclaw browser status`, `references/selectors.md`, `openclaw browser tabs`, and `openclaw browser open https://chatgpt.com/`, the model still stopped with the raw answer `HHB-V037-SMOKE-20260408`, without rebinding `run_tab_id`, without taking a writable snapshot on the new tab, and without any Phase F output.
+
+**Fix:**
+1. Upgrade to `chatgpt-pro` v0.3.38 or later.
+2. Reinstall it with `./scripts/install-openclaw-skill.sh`.
+3. Start a fresh OpenClaw WebUI session so the stricter pre-submit guard is loaded.
+4. In the fixed build, `status` + `tabs` + `open https://chatgpt.com/` plus optional `selectors.md` reads is still setup-only. The run must re-enumerate tabs, bind the dedicated `run_tab_id`, and take a writable snapshot before it may proceed.
+5. Treat any raw wrapped answer emitted before a bound writable snapshot exists as an invalid run, even if a fresh `chatgpt.com/` tab was opened.
 
 ---
 
@@ -150,6 +202,19 @@
 3. Treat exact `/chatgpt-pro <prompt>` runs the same as wrapped OpenClaw invocations for completion discipline: the run is not done until Phase F prints the six required fields with either a validated `https://chatgpt.com/share/<uuid>` or explicit `PRIVATE-ONLY`.
 4. A screenshot-visible answer alone is not success.
 5. If the browser answer exists but public-share extraction still fails, fall back to `PRIVATE-ONLY` plus the private `chatgpt.com/c/<conv_id>` note instead of freeform prose.
+
+---
+
+## "The run executed `openclaw browser evaluate '1+1'` and then answered `2`"
+
+**Cause:** The exec-only backend probe used an arithmetic evaluate expression that overlapped with the actual user prompt. On huanghaibin-host OpenClaw WebUI this reproduced on 2026-04-08: the run correctly entered the skill, printed `Using the requested ChatGPT Pro path.`, executed `openclaw browser status`, then executed `openclaw browser evaluate '1+1'`, and finally surfaced the probe result `2` as if it were the ChatGPT Pro answer. No real ChatGPT submit/share flow happened.
+
+**Fix:**
+1. Upgrade to `chatgpt-pro` v0.3.35 or later.
+2. Reinstall it with `./scripts/install-openclaw-skill.sh`.
+3. In the fixed build, the evaluate probe must use an inert sentinel such as `() => "__CHATGPT_PRO_EVAL_OK__"` that cannot be confused with the user's prompt.
+4. Treat any local `browser evaluate` / `openclaw browser evaluate` output as backend-diagnostic only, never as answer content.
+5. The user's prompt must never be executed through `browser evaluate`, shell arithmetic, or any local evaluator. It may only be typed/filled into the ChatGPT composer in Phase C.
 
 ---
 
@@ -286,6 +351,48 @@
 
 ---
 
+## "The transcript said `openclaw browser status` was `running: false`, so it never invoked the bundled driver"
+
+**Cause:** On some exec-only OpenClaw hosts, the installed `openclaw-chatgpt-pro-driver.py` succeeds through the CDP probe backend against a logged-in Chrome clone even while the default `openclaw browser status` probe reports `running: false`. A live `huanghaibin-host` WebUI run on 2026-04-09 reproduced this exact false negative: the model read the installed skill, ran `openclaw browser status`, saw `running: false`, and then answered locally with a backend-unavailable message instead of invoking the bundled driver.
+
+**Fix:**
+1. Upgrade to `chatgpt-pro` v0.3.40 or later.
+2. Reinstall it with `./scripts/install-openclaw-skill.sh`.
+3. On exec-only hosts, treat `~/.openclaw/workspace/skills/chatgpt-pro/scripts/openclaw-chatgpt-pro-driver.py` as the authoritative backend entrypoint whenever it exists and is runnable.
+4. Invoke the driver immediately after reading `SKILL.md`; do not place a standalone `openclaw browser status` gate ahead of it.
+5. Only fall back to manual `openclaw browser status` / `tabs` / `open` probing when the bundled driver is missing or exits with a concrete backend-unavailable error.
+6. A transcript that stops at `running: false` without ever invoking the bundled driver is invalid.
+
+---
+
+## "The bundled driver was invoked, but the transcript ended with `Still running...` instead of Phase F"
+
+**Cause:** The exec-only WebUI run correctly started `openclaw-chatgpt-pro-driver.py`, but it launched it with a tiny `yieldMs`, so `exec` backgrounded the process after about 1 second. The model then polled the background session a few times and terminated the reply with placeholder prose before the driver process exited and emitted its final stdout. A live `huanghaibin-host` WebUI run on 2026-04-09 reproduced this exactly: the session invoked `python3 ~/.openclaw/workspace/skills/chatgpt-pro/scripts/openclaw-chatgpt-pro-driver.py fresh`, got `Command still running (session wild-coral, pid ...)`, polled `process` repeatedly, and then answered `Still running the ChatGPT Pro browser flow...`.
+
+**Fix:**
+1. Upgrade to `chatgpt-pro` v0.3.41 or later.
+2. Reinstall it with `./scripts/install-openclaw-skill.sh`.
+3. Invoke the bundled driver through `exec` with a long foreground yield window, typically `yieldMs=180000` to `240000`, plus `timeout=1200`.
+4. If `exec` still returns a background session, keep following up with `process` on that `sessionId` until the process exits and the real driver stdout can be parsed.
+5. Never close the current assistant turn with placeholder text while that driver process is still running.
+6. A transcript whose last assistant message is `Still running...` with no six-field Phase F block is invalid.
+
+---
+
+## "The exact `/chatgpt-pro` run started by reading `SOUL.md` / `USER.md` / `MEMORY.md` instead of entering the skill"
+
+**Cause:** On some OpenClaw sessions, the model drifted into generic workspace bootstrap behavior before treating `/chatgpt-pro` as a self-contained skill run. A live `huanghaibin-host` WebUI run on 2026-04-09 reproduced this exactly: the transcript began with reads of `SOUL.md`, `USER.md`, and dated memory files, only read `chatgpt-pro/SKILL.md` later, and then terminated with a local browser-unavailable explanation instead of invoking the driver/browser flow.
+
+**Fix:**
+1. Upgrade to `chatgpt-pro` v0.3.42 or later.
+2. Reinstall it with `./scripts/install-openclaw-skill.sh`.
+3. Treat exact `/chatgpt-pro ...` turns as self-contained skill invocations, just like the OpenClaw wrapper form.
+4. On OpenClaw, do not read `SOUL.md`, `USER.md`, `HEARTBEAT.md`, `MEMORY.md`, or dated `memory/*.md` before the skill driver/browser workflow starts.
+5. The first read is `chatgpt-pro/SKILL.md`; the next substantive action is the bundled driver or raw-browser fast path.
+6. A transcript that begins with those workspace bootstrap reads before the skill driver/browser workflow is invalid.
+
+---
+
 ## "ChatGPT DOM has drifted. Please run /chatgpt-pro --respike"
 
 **Cause:** The health check (Phase B-1) found one of the three anchor elements missing. ChatGPT likely shipped a frontend change.
@@ -345,13 +452,14 @@
 
 ## "OpenClaw WebUI `/chatgpt-pro ...` just echoed the answer instead of running the browser skill"
 
-**Cause:** OpenClaw slash-command routing sanitizes direct skill command names, and the most reliable generic entrypoint is `/skill chatgpt-pro <prompt>`. On 2026-04-08, a live zenas-host WebUI test showed `/chatgpt-pro Reply exactly ...` and a naive skill-wrapper turn both reading the skill file but then answering locally instead of spending Pro quota. The runtime wrapper form is `Use the "chatgpt-pro" skill for this request ... User input: <prompt>`.
+**Cause:** OpenClaw slash-command routing sanitizes direct skill command names, and the most reliable generic entrypoint is `/skill chatgpt-pro <prompt>`. On 2026-04-08, live zenas-host and huanghaibin-host WebUI tests showed `/chatgpt-pro Reply exactly ...` and a naive skill-wrapper turn both reading the skill file but then answering locally instead of spending Pro quota. The runtime wrapper form is `Use the "chatgpt-pro" skill for this request ... User input: <prompt>`.
 
 **Fix:**
-1. Upgrade to `chatgpt-pro` v0.3.20 or later.
+1. Upgrade to `chatgpt-pro` v0.3.34 or later.
 2. Invoke it from OpenClaw WebUI as `/skill chatgpt-pro <prompt>`.
 3. In the fixed build, treat the OpenClaw wrapper text as fully equivalent to a literal `/chatgpt-pro <prompt>` invocation.
-4. If the run still replies with the bare prompt output instead of opening ChatGPT browser tabs, treat that turn as a trigger-path failure rather than a ChatGPT/browser failure.
+4. If the host is exec-only, the post-read fast path may be `openclaw browser status` / `tabs` / `open`, but it still must open a dedicated ChatGPT run tab before any answer is produced.
+5. If the run still replies with the bare prompt output instead of opening ChatGPT browser tabs or taking exec-only browser steps, treat that turn as a trigger-path failure rather than a ChatGPT/browser failure.
 
 ---
 

@@ -1,7 +1,7 @@
 # Consent Scripts
 
 > Exact wording of every `AskUserQuestion` the skill emits. Bilingual (EN + 中文).
-> **Skill version:** 0.3.32
+> **Skill version:** 0.3.43
 > **Rule:** These scripts MUST be used verbatim — do not rephrase at runtime.
 > **Runtime rule:** When any script below is emitted, it must be the entire assistant turn. No leading prose, no trailing prose, no paraphrase, and no fake acknowledgement such as "✅ confirmed" before the user answers.
 > **Consent mode rule:** If `AskUserQuestion` is available, emit the script through `AskUserQuestion`. Otherwise emit the same question and option labels as plain text, append `Reply with exactly one option label.`, then wait for the next user message.

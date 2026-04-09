@@ -1,14 +1,11 @@
 ---
 name: chatgpt-pro
 description: Run ONE prompt on chatgpt.com using Pro 5.4 (research-grade) with Advanced thinking and return a shareable conversation link. Burns the user's scarce Pro quota on every call. Use ONLY when the user explicitly types /chatgpt-pro or literally says "ChatGPT Pro" / "用 ChatGPT Pro". If you only need the answer text and not a public shareable link, prefer the OpenAI API instead of this skill.
-version: 0.3.32
+version: 0.3.43
 user-invocable: true
 metadata:
   openclaw:
     emoji: 🧠
-    requires:
-      tools:
-        - browser
     capabilities:
       - browser.snapshot
       - browser.act
@@ -34,9 +31,9 @@ trigger_mode: manual_only
 
 <!--
   chatgpt-pro skill
-  Version: 0.3.32
+  Version: 0.3.43
   Single-body dual-platform skill for Claude Code and OpenClaw.
-  Last reviewed: 2026-04-08 (huanghaibin-host OpenClaw stale old-conversation loop guard + dedicated run-tab affinity + exec-only CLI compatibility + prefilled ?prompt is not submit + exact slash run must not stop at answer-only prose + share-copy disabled-first snapshot recovery + zenas-host slash-wrapper hard guard + no legacy account/send confirmations + unexpected temporary-chat escape before submit + composer textbox-only guard + aria-ref write-guard + share-button disambiguation + share-dialog degenerate-snapshot recovery)
+  Last reviewed: 2026-04-09 (huanghaibin-host OpenClaw WebUI now treats `/chatgpt-pro` as a self-contained skill run: no SOUL/USER/MEMORY bootstrap drift, exec-only hosts must read this skill and then immediately run the bundled deterministic driver, the reply must remain open until that driver exits with Phase F, and the OpenClaw frontmatter no longer falsely implies that only the raw `browser` tool counts as a valid backend)
   DO NOT edit selectors inline — pin them in references/selectors.md.
 -->
 
@@ -48,13 +45,31 @@ If the current user turn contains OpenClaw's generic skill wrapper text such as:
 
 then this skill is already selected and MUST run.
 
+If the current user turn literally contains `/chatgpt-pro`, this skill is also already selected and MUST run as a self-contained workflow.
+
 - Do **not** re-decide whether to use the skill.
 - Do **not** answer the raw `User input:` locally from the current model.
 - Treat everything after `User input:` as the prompt that must be executed on ChatGPT Pro via the browser workflow below.
+- On OpenClaw, do **not** read generic workspace bootstrap/persona/memory files such as `SOUL.md`, `USER.md`, `HEARTBEAT.md`, `MEMORY.md`, or dated `memory/*.md` before executing this skill. They are irrelevant to this quota-burning browser workflow and have caused real regressions on `huanghaibin-host`.
+- For an exact `/chatgpt-pro ...` run on OpenClaw, the first read is this skill file; the next substantive action is the bundled driver invocation (or the raw browser fast path only if the driver is genuinely unavailable). Reading unrelated workspace docs first is a hard regression.
+- On OpenClaw when `exec` is available, use this exact first-action template for a fresh run before reading any further references:
+  `python3 ~/.openclaw/workspace/skills/chatgpt-pro/scripts/openclaw-chatgpt-pro-driver.py fresh <<'EOF'`
+  `<prompt>`
+  `EOF`
+  Run it through `exec` from `~/.openclaw/workspace` with a long foreground yield window (`yieldMs` about `240000`) and `timeout` about `1200`.
+- If that `exec` call returns a background session, continue with `process` on the returned `sessionId` until the driver exits and prints the real Phase F block. Do not end the reply earlier.
+- If the raw `browser` tool is absent but `exec` / `process` is available and the installed `openclaw browser ...` CLI works, that still counts as a valid OpenClaw browser backend for this skill. Do **not** treat that session as browserless.
+- If `exec` or `process` is visible, do **not** conclude "Neither is available" until you have actually attempted one exec-only probe such as `exec("openclaw browser status")` or the equivalent `process` call.
+- Never execute the user's prompt with any local evaluator. In particular, never pass the prompt string, any trimmed prompt fragment, or any prompt-derived arithmetic/text into `browser evaluate`, `openclaw browser evaluate`, shell arithmetic, JavaScript eval, or similar local execution.
+- `browser evaluate` is allowed only for backend diagnostics or DOM introspection. Its output is never user-visible answer content and must never be treated as a substitute for ChatGPT Pro completion.
 - The only valid successful output for that wrapped invocation is the normal Phase F report with a real `https://chatgpt.com/share/<uuid>` or an explicit Phase E fallback such as `PRIVATE-ONLY`.
 - On a wrapped invocation, a direct local answer such as `ZENAS-...`, `2`, or any other raw completion of `User input:` is a hard failure. Do not do it.
+- A final line shaped like `Share link: https://chatgpt.com/c/<conv_id>` is also a hard failure. That is a private conversation URL, not the public share result this skill exists to return.
+- Merely opening `https://chatgpt.com/`, merely seeing one or more `chatgpt.com` tabs in inventory, or merely reading `references/selectors.md` is still setup-only progress. None of those events may be surfaced as the run result or used to justify a plain-text completion of `User input:`.
 - The same completion rule applies to exact `/chatgpt-pro <prompt>` runs: never stop at a visible answer, a screenshot, or ordinary assistant prose. The run is only complete when Phase F prints the six-field report with a validated public `share/<uuid>` URL or the explicit `PRIVATE-ONLY` fallback.
-- On a wrapped fresh default run, after reading this file the next substantive action must be a browser step from the OpenClaw fast path (`browser status` / `browser tabs` / `browser open https://chatgpt.com/`), not a plain-text answer.
+- On a wrapped fresh default run, after reading this file the next substantive action must be a browser step from the OpenClaw fast path. Use either the raw-browser form (`browser status` / `browser tabs` / `browser open https://chatgpt.com/`) or the exec-only equivalent (`exec("openclaw browser status")` / `exec("openclaw browser tabs")` / `exec("openclaw browser open https://chatgpt.com/")`), but do **not** stop at a plain-text answer.
+- A wrapped session that reads only this file and then prints the raw prompt result without any browser step, any exec-only `openclaw browser ...` step, or any valid A2/D2 gate is a hard regression.
+- On exec-only OpenClaw hosts where the installed skill package contains the bundled driver, that driver call itself is the required first substantive browser action. Do **not** preflight it with a standalone `openclaw browser status` gate.
 
 ## When to Use
 
@@ -85,25 +100,44 @@ On OpenClaw WebUI, the most reliable user entrypoint is `/skill chatgpt-pro <pro
 
 ## OpenClaw Fresh-Run Fast Path
 
-When `BACKEND=openclaw` and the invocation is a fresh default run (not `--resume`, `--unshare`, `--spike`, or `--respike`), keep startup extremely direct:
+When `BACKEND=openclaw` or `BACKEND=openclaw_cli_exec` and the invocation is a fresh default run (not `--resume`, `--unshare`, `--spike`, or `--respike`), keep startup extremely direct:
 
 1. Read **this file first**. Do not open extra reference files before the first live ChatGPT tab is created unless you are blocked on a concrete selector or tool-call detail.
 2. Within the next few tool calls, do these setup actions in order:
-   - `browser status`
-   - `browser tabs`
-   - `browser open https://chatgpt.com/`
-3. Do **not** stop after `browser status` or `browser tabs`. Those are setup-only probes, not completion points.
-4. If no dedicated writable `https://chatgpt.com/` tab exists yet for this run, you are still in Phase A and must continue instead of waiting or ending the turn.
-5. Immediately after `browser open https://chatgpt.com/`, re-enumerate tabs and bind a concrete `run_tab_id` for this invocation. Prefer a brand-new fresh-home tab (`/` or `/?...`) whose id was not present in the pre-open tab list. If the newly opened tab lands on a pre-existing `/c/<id>` page instead, keep that same new tab handle and repair it via A4; do not silently switch back to some older tab because it has a richer snapshot.
-6. Once the dedicated tab exists, use a writable interactive snapshot (`snapshot --format ai --labels`, compact role snapshot, or equivalent `e...` ref namespace) before every click/type on that tab.
-7. If an OpenClaw writable snapshot collapses to shell-only content such as `跳至内容` / `Skip to content`, or returns only a tiny ref set on a page that is known to contain a composer or dialog, treat it as a **degenerate snapshot**. Re-snapshot before taking any write action; never drive clicks from that shell snapshot.
+   Use the raw browser tool when present or the exec-only CLI equivalent when it is not.
+   - `browser status` or `exec("openclaw browser status")`
+   - `browser tabs` or `exec("openclaw browser tabs")`
+   - `browser open https://chatgpt.com/` or `exec("openclaw browser open https://chatgpt.com/")`
+3. Do **not** stop after `browser status` / `browser tabs`, do **not** stop after `exec("openclaw browser status")` / `exec("openclaw browser tabs")`, and do **not** stop after a one-shot inert evaluate probe like `__CHATGPT_PRO_EVAL_OK__`. Those are setup-only probes, not completion points.
+4. If the only browser evidence so far is `status`, inert `evaluate`, and `tabs`, then the run has not yet created its dedicated writable tab. You are still in Phase A and must continue instead of waiting, answering locally, or inventing a share link from a pre-existing `/c/<id>` tab.
+5. Immediately after `browser open https://chatgpt.com/` or `exec("openclaw browser open https://chatgpt.com/")`, re-enumerate tabs and bind a concrete `run_tab_id` for this invocation. Prefer a brand-new fresh-home tab (`/` or `/?...`) whose id was not present in the pre-open tab list. If the newly opened tab lands on a pre-existing `/c/<id>` page instead, keep that same new tab handle and repair it via A4; do not silently switch back to some older tab because it has a richer snapshot.
+6. Until that `run_tab_id` rebinding succeeds and a writable snapshot is taken from the bound tab, the run is still in setup. Reading `references/selectors.md`, seeing multiple `chatgpt.com` tabs, or seeing the fresh-home `/` page is not enough to answer, not enough to submit, and not enough to report success.
+7. Once the dedicated tab exists, use a writable interactive snapshot (`snapshot --format ai --labels`, compact role snapshot, or equivalent `e...` ref namespace) before every click/type on that tab.
+8. If an OpenClaw writable snapshot collapses to shell-only content such as `跳至内容` / `Skip to content`, or returns only a tiny ref set on a page that is known to contain a composer or dialog, treat it as a **degenerate snapshot**. Re-snapshot before taking any write action; never drive clicks from that shell snapshot.
 
 ## OpenClaw Exec-Only Compatibility
 
 Some OpenClaw WebUI / remote-agent environments expose `exec` / `process` but not the raw `browser` tool. In that case, the browser backend is still valid, but it must be driven through the installed CLI:
 
+- On OpenClaw exec-only hosts, if the installed skill package contains `scripts/openclaw-chatgpt-pro-driver.py`, that bundled driver is the canonical execution path for fresh and resume runs.
+- When that driver exists and is runnable, invoke it **immediately after reading this file**. Do not substitute ad-hoc `openclaw browser ...` shell steps, and do not insert a blocking `openclaw browser status` preflight ahead of it.
+- Resolve the script relative to the installed skill directory. On standard OpenClaw installs, the path is `~/.openclaw/workspace/skills/chatgpt-pro/scripts/openclaw-chatgpt-pro-driver.py`.
+- Fresh run form: `printf "%s" "<prompt>" | python3 ~/.openclaw/workspace/skills/chatgpt-pro/scripts/openclaw-chatgpt-pro-driver.py fresh`
+- Resume form: `python3 ~/.openclaw/workspace/skills/chatgpt-pro/scripts/openclaw-chatgpt-pro-driver.py resume --conv-id <conv_id>`
+- On OpenClaw WebUI exec/process hosts, prefer a foreground `exec` invocation of the driver with a long enough yield window to cover a normal run. Use `yieldMs` on the order of 180000-240000 and `timeout` around 1200 so the tool can return the driver's final stdout directly instead of backgrounding it after 1 second.
+- The driver honors `--browser-profile <name>` and `CHATGPT_PRO_BROWSER_PROFILE=<name>`. Use `auto` by default; it probes `user` first and then falls back to the default OpenClaw browser profile if `user` is unavailable. Do not improvise a local answer if the `user` profile probe fails.
+- The driver's own outcome is authoritative for backend availability on that host. A standalone `openclaw browser status` result of `running: false` does **not** override a runnable driver, because the driver may use the CDP probe backend against a logged-in Chrome clone instead of the default OpenClaw browser daemon.
+- If the driver exists and is runnable, do **not** stop after reading this file and do **not** answer the wrapped prompt locally. Run the driver or fail safely.
+- If the driver invocation backgrounds anyway and `exec` returns `Command still running (session <id> ...)`, the run is still in progress. Immediately follow up with `process` on that `sessionId` until the process exits, then parse the driver's real stdout/stderr and surface only the final Phase F result.
+- Never end the current assistant turn with placeholder prose such as `Still running the ChatGPT Pro browser flow...`, `I’ll send the result once ready`, or similar. That is an invalid partial run. The WebUI reply must stay open until the driver exits and Phase F is available, or fail explicitly.
+
+- If the raw `browser` tool is absent but `exec` or `process` exists and `openclaw browser status` succeeds, this section is the active backend for the current run. Do **not** answer locally just because the raw browser tool is missing.
+- On some OpenClaw remote-agent hosts, the tool list exposes only `exec` and `process`. That is still enough signal to attempt the CLI probe; do not skip the probe just because `browser` is absent from the tool list.
+- Only fall back to manual `openclaw browser status` / `tabs` / `open` probing when the bundled driver is missing, unreadable, or exits with a concrete backend-unavailable error. Do not choose the manual probe path while a runnable bundled driver is still available.
 - Use the literal OpenClaw CLI subcommands that actually exist on OpenClaw `2026.3.24`: `status`, `tabs`, `open`, `navigate`, `snapshot`, `click <ref>`, `fill --fields '<json>'`, `press <key>`, `requests`, `responsebody`, `screenshot`.
 - Do **not** invent `openclaw browser act ...`, `openclaw browser type ...`, or `openclaw browser act 'type ...'` in exec-only mode. Those subcommands do not exist on this build and will hard-fail before the prompt is submitted.
+- Do **not** pass the user's prompt to `openclaw browser evaluate`. That command is for DOM inspection or inert backend probes only. The prompt itself may only be written into the ChatGPT composer during Phase C.
+- On OpenClaw `2026.3.24`, subcommand waits must follow the real subcommand grammar. `openclaw browser open <url>` accepts **no** timeout flag, while wait-style subcommands such as `responsebody` require `--timeout-ms <n>` after the subcommand. Do **not** append a global-style `--timeout <n>` after `open`, `responsebody`, or similar subcommands; it can fail with `unknown option '--timeout'`.
 - For composer text entry on exec-only OpenClaw, the working form is:
   `openclaw browser fill --fields '[{"ref":"<composer_ref>","value":"<escaped_prompt>"}]' [--target-id <tabId>]`
 - Do **not** use `openclaw browser navigate "https://chatgpt.com/?prompt=..."` or `...?model=...&prompt=...` as a substitute for Phase C. Those URLs only prefill the composer; they do not submit, do not create `/c/<conv_id>`, and do not count as quota-spending submit evidence.
@@ -140,11 +174,17 @@ These rules are non-negotiable. If any one fails, the run must end as `PRIVATE-O
 13. Fresh default runs must use a dedicated new writable `https://chatgpt.com/` tab for this run. Existing `/c/<id>` and `/share/<uuid>` pages are evidence only, never write targets.
 14. Fresh default runs that need a public share link must never submit from `?temporary-chat=true` or from a page headed `临时聊天` / `Temporary chat`. If that state appears before any submit evidence exists, escape it exactly once and continue on a normal fresh chat; if it persists, stop before quota burn.
 15. On an OpenClaw wrapped invocation (`Use the "chatgpt-pro" skill for this request ... User input:`), a plain-text answer that directly completes `User input:` before any browser workflow is a regression. The wrapper exists to run the browser flow, not to answer locally.
-16. On OpenClaw, a writable snapshot that only exposes shell controls such as `跳至内容` / `Skip to content`, or only a tiny ref set on a page that is already known to contain the composer or share dialog, is invalid evidence. Re-snapshot or fall back to a pinned role/name locator; never click arbitrary tiny refs like `e1`, `e2`, or `e3` from that snapshot.
-17. A ChatGPT URL like `https://chatgpt.com/?prompt=...` or `...?model=...&prompt=...` is **not** submit evidence and is never a valid stopping point. Treat it as pre-submit composer state only; the run must still verify the input and explicitly press Enter or click the enabled send button.
-18. For exact `/chatgpt-pro <prompt>` runs, a final assistant message that only paraphrases or quotes the answer, without the strict Phase F six-field report and without a validated `share/<uuid>` or explicit `PRIVATE-ONLY`, is a hard failure.
-19. On a fresh default run, every pre-submit Phase B/C write must stay bound to the dedicated `run_tab_id` created for this invocation. A pre-existing `/c/<id>` tab from A2 is never a valid write target, even if it shows a richer snapshot, a visible model menu, or fewer errors.
-20. If the run is still on any `preexisting_conv_ids` page while taking repeated screenshots, reopening the model menu, or clicking `进阶专业` / `Advanced`, that is a stale-tab loop, not progress. Repair back to the dedicated fresh-home run tab or stop before quota burn.
+16. On OpenClaw exact `/chatgpt-pro ...` runs, reading unrelated workspace bootstrap files such as `SOUL.md`, `USER.md`, `HEARTBEAT.md`, `MEMORY.md`, or dated `memory/*.md` before the skill driver/browser workflow starts is a regression. This skill is self-contained and must not be delayed by general workspace persona loading.
+17. On OpenClaw, a writable snapshot that only exposes shell controls such as `跳至内容` / `Skip to content`, or only a tiny ref set on a page that is already known to contain the composer or share dialog, is invalid evidence. Re-snapshot or fall back to a pinned role/name locator; never click arbitrary tiny refs like `e1`, `e2`, or `e3` from that snapshot.
+18. A ChatGPT URL like `https://chatgpt.com/?prompt=...` or `...?model=...&prompt=...` is **not** submit evidence and is never a valid stopping point. Treat it as pre-submit composer state only; the run must still verify the input and explicitly press Enter or click the enabled send button.
+19. For exact `/chatgpt-pro <prompt>` runs, a final assistant message that only paraphrases or quotes the answer, without the strict Phase F six-field report and without a validated `share/<uuid>` or explicit `PRIVATE-ONLY`, is a hard failure.
+20. On a fresh default run, every pre-submit Phase B/C write must stay bound to the dedicated `run_tab_id` created for this invocation. A pre-existing `/c/<id>` tab from A2 is never a valid write target, even if it shows a richer snapshot, a visible model menu, or fewer errors.
+21. If the run is still on any `preexisting_conv_ids` page while taking repeated screenshots, reopening the model menu, or clicking `进阶专业` / `Advanced`, that is a stale-tab loop, not progress. Repair back to the dedicated fresh-home run tab or stop before quota burn.
+22. The backend-diagnostic `evaluate` probe must use an inert sentinel expression unrelated to the user's prompt, for example `() => "__CHATGPT_PRO_EVAL_OK__"`. Never use arithmetic like `1+1` for the probe, because it can be confused with the actual user prompt and leak into the final answer.
+23. If any local probe or DOM-inspection tool returns a value that coincidentally looks like the user's requested answer, that value is still untrusted diagnostic output. It must never be surfaced as the run result and must not short-circuit Phase A-F.
+24. On OpenClaw, the sequence `status` + inert `evaluate` + `tabs` is setup-only evidence. It never authorizes a final answer, never authorizes reuse of a pre-existing private `/c/<id>` URL as the reported share link, and never satisfies Phase F.
+25. On OpenClaw fresh runs, the extended sequence `status` + `tabs` + `open https://chatgpt.com/` plus optional reads such as `references/selectors.md` is still pre-submit setup until a concrete `run_tab_id` is rebound and a writable snapshot from that bound tab confirms the composer/share context. It still never authorizes a final answer.
+26. On OpenClaw exec/process hosts, a backgrounded bundled-driver session is still an in-flight run. Do not terminate the current reply while that process is running. Wait for process exit and Phase F, or fail explicitly.
 
 ---
 
@@ -155,18 +195,28 @@ This skill runs on two harnesses. At the start of **every invocation**, detect w
 **Detection rules (in order):**
 
 1. **Claude Code** — if `mcp__Claude_in_Chrome__tabs_context_mcp` is in your tools → `BACKEND=claude_code`
-2. **OpenClaw** — if a tool named `browser` is in your tools → `BACKEND=openclaw`
-   - Then **one-shot probe** `browser kind=evaluate --fn '1+1'`:
-     - Success → `EVAL_DISABLED=false`
+2. **OpenClaw (raw browser tool)** — if a tool named `browser` is in your tools → `BACKEND=openclaw`
+   - Then **one-shot inert probe** `browser kind=evaluate --fn '() => "__CHATGPT_PRO_EVAL_OK__"'`:
+     - Success with the sentinel payload → `EVAL_DISABLED=false`
      - Failure / disabled error → `EVAL_DISABLED=true`
    - **Cache this probe result.** Do NOT re-probe per phase.
    - On fresh default runs, after backend detection finishes, immediately follow the OpenClaw fast path above. `browser status` / `browser tabs` without the subsequent dedicated `browser open https://chatgpt.com/` step is incomplete setup, not a valid stopping point.
-3. **Consent mode** — if `AskUserQuestion` exists in your tool list → `CONSENT_MODE=ask_user_question`; otherwise `CONSENT_MODE=text_gate`.
+3. **OpenClaw (exec-only CLI path)** — if the raw `browser` tool is absent, but a tool named `exec` or `process` is in your tools:
+   - First resolve the installed bundled driver at `~/.openclaw/workspace/skills/chatgpt-pro/scripts/openclaw-chatgpt-pro-driver.py`.
+   - If that file exists and is runnable, set `BACKEND=openclaw_cli_exec_driver` and invoke it immediately for the active mode (`fresh` / `resume`). Do **not** run a standalone `openclaw browser status` preflight before the driver.
+   - Only if the bundled driver is missing, unreadable, or exits with a concrete backend-unavailable error may you fall back to manual CLI probing:
+     - `exec("openclaw browser status")` or the equivalent `process` call succeeds → `BACKEND=openclaw_cli_exec`
+     - Then **one-shot inert probe** the installed CLI browser backend for evaluate support:
+       - `exec("openclaw browser evaluate --fn '() => \"__CHATGPT_PRO_EVAL_OK__\"'")` or equivalent succeeds with the sentinel payload → `EVAL_DISABLED=false`
+       - Failure / disabled error → `EVAL_DISABLED=true`
+     - **Cache this probe result.** Do NOT re-probe per phase.
+     - On fresh default runs, after backend detection finishes, immediately follow the same OpenClaw fast path above, but through exec-only CLI calls. `exec("openclaw browser status")` / `exec("openclaw browser tabs")` without the subsequent dedicated `exec("openclaw browser open https://chatgpt.com/")` step is incomplete setup, not a valid stopping point.
+4. **Consent mode** — if `AskUserQuestion` exists in your tool list → `CONSENT_MODE=ask_user_question`; otherwise `CONSENT_MODE=text_gate`.
    - In `text_gate` mode, emit the exact script from `references/consent-scripts.md` as plain text, append `Reply with exactly one option label.`, then stop and wait for the next user reply.
    - If the reply does not exactly match one of the listed option labels, re-emit the same gate once. If it still does not match, stop safely.
    - In `v0.3.19+`, this only applies to the remaining A2 / D2 gates. Default fresh runs and exact `--resume` runs must not invent extra share/account/submit confirmations.
-3. **Neither** → STOP. Print: "This skill needs either Claude-in-Chrome or OpenClaw's browser tool. Neither is available."
-4. **Both available** → STOP and ask the user which backend to use. Never silently pick one.
+5. **Neither** → STOP only after the raw `browser` check failed **and** any visible `exec` / `process` tool failed the mandatory `openclaw browser status` probe. Then print: "This skill needs either Claude-in-Chrome or an OpenClaw browser backend (raw `browser` tool or exec-only `openclaw browser` CLI). Neither is available."
+6. **Claude Code and OpenClaw both available** → STOP and ask the user which backend to use. Never silently pick one.
 
 ---
 
@@ -557,6 +607,7 @@ Output exactly these fields (no more, no less):
 - `https://chatgpt.com/share/<conv_id>`
 - `Copy https://chatgpt.com/share/<conv_id>`
 - `分享链接已复制到剪贴板` without a concrete `https://chatgpt.com/share/<uuid>`
+- `Share link: https://chatgpt.com/c/<conv_id>`
 - `当前页面已加载，输入框已就绪。你可以继续提问`
 - The raw wrapped prompt answer by itself, such as `ZENAS-RELIABILITY-AD-N` or `2`, with no browser workflow and no Phase F fields
 - `恢复结果`
